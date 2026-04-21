@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Го 19×19</title>
+<style>
+  :root {
+    --bg: #0a0f14;
+    --panel: #141a24;
+    --text: #9aa5b4;
+    --text-bright: #e2e8f0;
+    --border: #253040;
+    --hover: rgba(255,255,255,0.06);
+    --board: #242019;
+    --grid: #3c352c;
+    --hoshi: #8a7f6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: 12px;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .container {
+    background: var(--panel);
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 640px;
+  }
+  .controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  select, button {
+    background: var(--bg);
+    color: var(--text-bright);
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.15s;
+    flex: 1 1 auto;
+    min-width: 80px;
+  }
+  select:hover, button:hover { background: var(--hover); border-color: #3b4b5c; }
+  button:active { transform: scale(0.97); }
+  .status {
+    font-size: 13px;
+    color: var(--text-bright);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 100%;
+    margin-top: 4px;
+    justify-content: center;
+  }
+  .turn-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    display: inline-block; border: 2px solid var(--border);
+  }
+  .turn-dot.b { background: #1a2028; }
+  .turn-dot.w { background: #e6e2d8; }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 10px;
+    cursor: crosshair;
+    background: var(--board);
+    touch-action: none;
+  }
+  .info {
+    margin-top: 12px;
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .info span { display: flex; align-items: center; gap: 6px; }
+  .info .stone { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .info .stone.b { background: #1a2028; border: 1px solid #2a3040; }
+  .info .stone.w { background: #e6e2d8; }
+  .score { margin-top: 10px; text-align: center; font-size: 14px; min-height: 20px; color: var(--text-bright); line-height: 1.4; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="controls">
+    <select id="difficulty">
+      <option value="easy">Лёгкий</option>
+      <option value="medium" selected>Средний</option>
+      <option value="hard">Сложный</option>
+    </select>
+    <button id="resetBtn">Новая игра</button>
+    <button id="passBtn">Пас</button>
+    <div class="status" id="status">
+      <span class="turn-dot b"></span>
+      Ход чёрных
+    </div>
+  </div>
+  <canvas id="board"></canvas>
+  <div class="info">
+    <span><span class="stone b"></span> Захвачено: <b id="capB">0</b></span>
+    <span><span class="stone w"></span> Захвачено: <b id="capW">0</b></span>
+  </div>
+  <div class="score" id="score"></div>
+</div>
+
+<script>
+const SIZE = 19;
+let CELL, PAD, CANVAS_SIZE;
+const BLACK = 1, WHITE = 2, EMPTY = 0;
+
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+let grid, currentPlayer, koPoint, passCount, captures, lastMove, hoverPos, gameOver;
+
+function initGame() {
+  CELL = 30;
+  PAD = 38;
+  CANVAS_SIZE = CELL * (SIZE - 1) + PAD * 2;
+  canvas.width = canvas.height = CANVAS_SIZE;
+  grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+  currentPlayer = BLACK;
+  koPoint = null; passCount = 0;
+  captures = { [BLACK]: 0, [WHITE]: 0 };
+  lastMove = null; hoverPos = null; gameOver = false;
+  document.getElementById('passBtn').disabled = false;
+  updateUI();
+}
+
+function toXY(r, c) { return { x: PAD + c * CELL, y: PAD + r * CELL }; }
+function fromXY(x, y) {
+  return { c: Math.round((x - PAD) / CELL), r: Math.round((y - PAD) / CELL) };
+}
+
+function drawBoard() {
+  ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  ctx.fillStyle = '#201c16';
+  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+  ctx.strokeStyle = '#3c352c';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < SIZE; i++) {
+    ctx.beginPath();
+    ctx.moveTo(PAD + i * CELL, PAD);
+    ctx.lineTo(PAD + i * CELL, PAD + (SIZE - 1) * CELL);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(PAD, PAD + i * CELL);
+    ctx.lineTo(PAD + (SIZE - 1) * CELL, PAD + i * CELL);
+    ctx.stroke();
+  }
+
+  const stars = [3, 9, 15];
+  ctx.fillStyle = '#8a7f6b';
+  for (const r of stars) for (const c of stars) {
+    ctx.beginPath();
+    ctx.arc(PAD + c * CELL, PAD + r * CELL, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (grid[r][c] !== EMPTY) drawStone(r, c, grid[r][c]);
+  }
+
+  if (lastMove) {
+    const { x, y } = toXY(lastMove.r, lastMove.c);
+    ctx.beginPath();
+    ctx.arc(x, y, CELL * 0.22, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  if (hoverPos && currentPlayer === BLACK && !gameOver) {
+    const { x, y } = toXY(hoverPos.r, hoverPos.c);
+    ctx.beginPath();
+    ctx.arc(x, y, CELL * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(30,38,50,0.5)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+function drawStone(r, c, color) {
+  const { x, y } = toXY(r, c);
+  const rad = CELL * 0.44;
+  ctx.beginPath();
+  ctx.arc(x, y, rad, 0, Math.PI * 2);
+
+  if (color === BLACK) {
+    const g = ctx.createRadialGradient(x - rad*0.25, y - rad*0.25, rad*0.1, x, y, rad);
+    g.addColorStop(0, '#2f3845');
+    g.addColorStop(0.6, '#1a222d');
+    g.addColorStop(1, '#0b0e14');
+    ctx.fillStyle = g;
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  } else {
+    const g = ctx.createRadialGradient(x - rad*0.2, y - rad*0.2, rad*0.15, x, y, rad);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.6, '#e6e2d8');
+    g.addColorStop(1, '#c9c5b8');
+    ctx.fillStyle = g;
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  }
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetX = 1;
+  ctx.shadowOffsetY = 3;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+}
+
+function getGroup(r, c, board = grid) {
+  const color = board[r][c];
+  if (color === EMPTY) return null;
+  const group = [], libs = new Set(), visited = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+  const q = [[r, c]]; visited[r][c] = true;
+  while (q.length) {
+    const [cr, cc] = q.shift(); group.push([cr, cc]);
+    for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+      const nr = cr + dr, nc = cc + dc;
+      if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE || visited[nr][nc]) continue;
+      if (board[nr][nc] === EMPTY) { libs.add(nr * SIZE + nc); visited[nr][nc] = true; }
+      else if (board[nr][nc] === color) { visited[nr][nc] = true; q.push([nr, nc]); }
+    }
+  }
+  return { stones: group, liberties: libs.size };
+}
+
+function placeStone(r, c, board = grid, player = currentPlayer) {
+  board[r][c] = player;
+  const captured = [];
+  const opp = player === BLACK ? WHITE : BLACK;
+  for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+    const nr = r + dr, nc = c + dc;
+    if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE || board[nr][nc] !== opp) continue;
+    const g = getGroup(nr, nc, board);
+    if (g.liberties === 0) {
+      g.stones.forEach(([gr, gc]) => { board[gr][gc] = EMPTY; captured.push([gr, gc]); });
+    }
+  }
+  return captured;
+}
+
+function isKo(r, c) { return koPoint && koPoint[0] === r && koPoint[1] === c; }
+
+function tryMove(r, c) {
+  if (gameOver || grid[r][c] !== EMPTY || isKo(r, c)) return false;
+  const saved = grid.map(row => [...row]);
+  const captured = placeStone(r, c, grid, currentPlayer);
+  const g = getGroup(r, c, grid);
+  if (g.liberties === 0) { grid = saved; return false; }
+  captures[currentPlayer] += captured.length;
+  koPoint = captured.length === 1 && g.stones.length === 1 ? captured[0] : null;
+  lastMove = { r, c };
+  passCount = 0;
+  currentPlayer = currentPlayer === BLACK ? WHITE : BLACK;
+  updateUI();
+  if (currentPlayer === WHITE && !gameOver) setTimeout(aiMove, 200);
+  return true;
+}
+
+function doPass() {
+  if (gameOver) return;
+  passCount++;
+  lastMove = null;
+  currentPlayer = currentPlayer === BLACK ? WHITE : BLACK;
+  updateUI();
+  if (passCount >= 2) endGame();
+  else if (currentPlayer === WHITE && !gameOver) setTimeout(aiMove, 200);
+}
+
+function endGame() {
+  gameOver = true;
+  const bTerr = countTerritory(BLACK);
+  const wTerr = countTerritory(WHITE);
+  const komi = 6.5;
+  const bTotal = captures[BLACK] + bTerr;
+  const wTotal = captures[WHITE] + wTerr + komi;
+  const res = bTotal > wTotal ? 'Победа чёрных' : 'Победа белых';
+  scoreEl.innerHTML = `<b>Игра окончена</b><br>⚫ ${bTotal} | ⚪ ${wTotal} (+${komi} коми)<br>${res}`;
+  document.getElementById('passBtn').disabled = true;
+}
+
+function countTerritory(color) {
+  const visited = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+  let terr = 0;
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (grid[r][c] !== EMPTY || visited[r][c]) continue;
+    const region = [], borders = new Set();
+    const q = [[r, c]]; visited[r][c] = true;
+    while (q.length) {
+      const [cr, cc] = q.shift(); region.push([cr, cc]);
+      for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const nr = cr + dr, nc = cc + dc;
+        if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) continue;
+        if (grid[nr][nc] === EMPTY && !visited[nr][nc]) { visited[nr][nc] = true; q.push([nr, nc]); }
+        else if (grid[nr][nc] !== EMPTY) borders.add(grid[nr][nc]);
+      }
+    }
+    if (borders.size === 1 && borders.has(color)) terr += region.length;
+  }
+  return terr;
+}
+
+// Оптимизированный ИИ без копирования доски и тяжёлых обходов
+function evaluateMove(r, c, level) {
+  let sc = Math.random() * 3;
+  const opp = WHITE === BLACK ? BLACK : WHITE; // always opp for AI (WHITE)
+  
+  // Проверка захвата соседей (O(1))
+  let canCapture = false;
+  for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+    const nr = r + dr, nc = c + dc;
+    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && grid[nr][nc] === BLACK) {
+      let libs = 0;
+      for (const [dr2, dc2] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const nnr = nr + dr2, nnc = nc + dc2;
+        if (nnr >= 0 && nnr < SIZE && nnc >= 0 && nnc < SIZE && grid[nnr][nnc] === EMPTY) libs++;
+      }
+      if (libs <= 1) canCapture = true;
+    }
+  }
+  if (canCapture) sc += level === 'hard' ? 45 : 35;
+
+  // Само-либерти (риск атари)
+  let selfLibs = 0;
+  for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+    const nr = r + dr, nc = c + dc;
+    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && grid[nr][nc] === EMPTY) selfLibs++;
+  }
+  if (selfLibs <= 1) sc -= 25;
+  if (selfLibs === 2) sc -= 4;
+
+  // Позиционная оценка
+  const distCenter = Math.abs(r-9) + Math.abs(c-9);
+  sc -= distCenter * (level === 'hard' ? 0.5 : 0.2);
+  const edge = Math.min(r, SIZE-1-r, c, SIZE-1-c);
+  if (edge <= 1) sc -= 6;
+
+  // Сложный: бонус за близость к своим камням (формирование влияния)
+  if (level === 'hard') {
+    for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1],[2,0],[-2,0],[0,2],[0,-2]]) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && grid[nr][nc] === WHITE) sc += 1.5;
+    }
+  }
+  return sc;
+}
+
+function aiMove() {
+  if (gameOver || currentPlayer !== WHITE) return;
+  const level = diff.value;
+  const moves = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++)
+    if (grid[r][c] === EMPTY && !isKo(r, c)) moves.push([r, c]);
+
+  if (moves.length === 0) { doPass(); return; }
+  if (level === 'easy') {
+    const m = moves[Math.floor(Math.random() * moves.length)];
+    tryMove(m[0], m[1]);
+    return;
+  }
+
+  let best = null, bestScore = -Infinity;
+  for (const [r, c] of moves) {
+    const sc = evaluateMove(r, c, level);
+    if (sc > bestScore) { bestScore = sc; best = [r, c]; }
+  }
+
+  // Если tryMove отвергнет ход (суицид/ко), пробуем следующий
+  if (best && !tryMove(best[0], best[1]) && !gameOver) {
+    setTimeout(aiMove, 50);
+  }
+}
+
+function updateUI() {
+  capBEl.textContent = captures[BLACK];
+  capWEl.textContent = captures[WHITE];
+  if (!gameOver) {
+    const isW = currentPlayer === WHITE;
+    statusEl.innerHTML = `<span class="turn-dot ${isW ? 'w' : 'b'}"></span> Ход ${isW ? 'белых' : 'чёрных'}${isW ? ' (ИИ)' : ''}`;
+    scoreEl.textContent = '';
+  }
+  drawBoard();
+}
+
+function handleInput(x, y) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const cx = (x - rect.left) * scaleX;
+  const cy = (y - rect.top) * scaleY;
+  const { r, c } = fromXY(cx, cy);
+  if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return;
+  if (currentPlayer === BLACK && !gameOver) tryMove(r, c);
+}
+
+function handleHover(x, y) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const cx = (x - rect.left) * scaleX;
+  const cy = (y - rect.top) * scaleY;
+  const { r, c } = fromXY(cx, cy);
+  if (r >= 0 && r < SIZE && c >= 0 && c < SIZE && grid[r][c] === EMPTY && currentPlayer === BLACK && !gameOver) {
+    hoverPos = { r, c };
+  } else {
+    hoverPos = null;
+  }
+  drawBoard();
+}
+
+canvas.addEventListener('mousemove', e => handleHover(e.clientX, e.clientY));
+canvas.addEventListener('mouseleave', () => { hoverPos = null; drawBoard(); });
+canvas.addEventListener('click', e => handleInput(e.clientX, e.clientY));
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  handleInput(t.clientX, t.clientY);
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  handleHover(t.clientX, t.clientY);
+}, { passive: false });
+
+document.getElementById('passBtn').addEventListener('click', doPass);
+document.getElementById('resetBtn').addEventListener('click', initGame);
+
+const diff = document.getElementById('difficulty');
+const statusEl = document.getElementById('status');
+const scoreEl = document.getElementById('score');
+const capBEl = document.getElementById('capB');
+const capWEl = document.getElementById('capW');
+
+initGame();
+</script>
+</body>
+</html>
